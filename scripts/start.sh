@@ -54,20 +54,26 @@ rotate_logs() {
 }
 
 # ============================================================
-# 检查服务是否已运行
+# 确保后端进程已停止
 # ============================================================
-check_running() {
-    local pid_file=$1
-    local service_name=$2
-    
-    if [ -f "$pid_file" ]; then
-        local pid=$(cat "$pid_file")
-        if ps -p "$pid" > /dev/null 2>&1; then
-            echo -e "${YELLOW}$service_name 已在运行 (PID: $pid)${NC}"
-            return 0
+ensure_backend_stopped() {
+    local pids=$(pgrep -f "xiaozhi.server.*\.jar" 2>/dev/null)
+    if [ -n "$pids" ]; then
+        echo -e "${YELLOW}发现残留的后端进程，正在清理...${NC}"
+        for pid in $pids; do
+            echo -e "  停止进程 PID: $pid"
+            kill "$pid" 2>/dev/null
+        done
+        sleep 2
+        # 强制杀掉
+        pids=$(pgrep -f "xiaozhi.server.*\.jar" 2>/dev/null)
+        if [ -n "$pids" ]; then
+            for pid in $pids; do
+                kill -9 "$pid" 2>/dev/null
+            done
         fi
+        rm -f "$BACKEND_PID"
     fi
-    return 1
 }
 
 # ============================================================
@@ -76,9 +82,8 @@ check_running() {
 start_backend() {
     echo -e "${GREEN}========== 启动后端服务 ==========${NC}"
     
-    if check_running "$BACKEND_PID" "后端"; then
-        return
-    fi
+    # 确保旧进程已停止
+    ensure_backend_stopped
     
     # 日志轮转
     rotate_logs "$BACKEND_LOG"
@@ -89,13 +94,46 @@ start_backend() {
     export JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64
     export PATH=$JAVA_HOME/bin:$PATH
     
-    # 启动后端
-    nohup java -jar target/xiaozhi.server-*.jar >> "$BACKEND_LOG" 2>&1 &
+    # 检查 jar 文件是否存在
+    local jar_file=$(ls -1 target/xiaozhi.server-*.jar 2>/dev/null | head -1)
+    if [ -z "$jar_file" ]; then
+        echo -e "${RED}错误: 找不到 jar 文件，请先运行 mvn package${NC}"
+        return 1
+    fi
+    
+    # 启动后端（添加 websocket 协议参数）
+    echo -e "  启动: java -jar $jar_file --xiaozhi.communication.protocol=websocket"
+    nohup java -jar "$jar_file" --xiaozhi.communication.protocol=websocket >> "$BACKEND_LOG" 2>&1 &
     local pid=$!
     echo $pid > "$BACKEND_PID"
     
-    echo -e "${GREEN}后端服务已启动 (PID: $pid)${NC}"
-    echo -e "${GREEN}日志文件: $BACKEND_LOG${NC}"
+    # 等待启动
+    sleep 3
+    
+    # 确认启动成功
+    if ps -p $pid > /dev/null 2>&1; then
+        echo -e "${GREEN}后端服务已启动 (PID: $pid)${NC}"
+        echo -e "${GREEN}日志文件: $BACKEND_LOG${NC}"
+    else
+        echo -e "${RED}后端服务启动失败，请查看日志: $BACKEND_LOG${NC}"
+        tail -20 "$BACKEND_LOG"
+        return 1
+    fi
+}
+
+# ============================================================
+# 确保前端进程已停止
+# ============================================================
+ensure_frontend_stopped() {
+    local pids=$(pgrep -f "vite.*--host" 2>/dev/null)
+    if [ -n "$pids" ]; then
+        echo -e "${YELLOW}发现残留的前端进程，正在清理...${NC}"
+        for pid in $pids; do
+            kill "$pid" 2>/dev/null
+        done
+        sleep 1
+        rm -f "$FRONTEND_PID"
+    fi
 }
 
 # ============================================================
@@ -104,9 +142,8 @@ start_backend() {
 start_frontend() {
     echo -e "${GREEN}========== 启动前端服务 ==========${NC}"
     
-    if check_running "$FRONTEND_PID" "前端"; then
-        return
-    fi
+    # 确保旧进程已停止
+    ensure_frontend_stopped
     
     # 日志轮转
     rotate_logs "$FRONTEND_LOG"
@@ -118,8 +155,14 @@ start_frontend() {
     local pid=$!
     echo $pid > "$FRONTEND_PID"
     
-    echo -e "${GREEN}前端服务已启动 (PID: $pid)${NC}"
-    echo -e "${GREEN}日志文件: $FRONTEND_LOG${NC}"
+    sleep 2
+    
+    if ps -p $pid > /dev/null 2>&1; then
+        echo -e "${GREEN}前端服务已启动 (PID: $pid)${NC}"
+        echo -e "${GREEN}日志文件: $FRONTEND_LOG${NC}"
+    else
+        echo -e "${RED}前端服务启动失败，请查看日志: $FRONTEND_LOG${NC}"
+    fi
 }
 
 # ============================================================
@@ -157,4 +200,3 @@ main() {
 }
 
 main
-
