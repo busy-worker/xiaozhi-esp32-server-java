@@ -293,7 +293,7 @@ public class DeviceController extends BaseController {
                 }
             } else {
                 // 设备已绑定，设置连接及认证信息
-                if (communicationProtocol.equals("websocket")) {
+                if (communicationProtocol.equals("websocket") || communicationProtocol.equals("both")) {
                     // 设置WebSocket连接信息.
                     String websocketToken = "";//deviceService.generateToken(deviceId);
                     Map<String, Object> websocketData = new HashMap<>();
