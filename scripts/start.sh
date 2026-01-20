@@ -94,6 +94,9 @@ start_backend() {
     export JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64
     export PATH=$JAVA_HOME/bin:$PATH
     
+    # 设置服务器内网 IP（用于返回给设备的 WebSocket 地址）
+    export HOST_IP=192.168.0.113
+    
     # 检查 jar 文件是否存在
     local jar_file=$(ls -1 target/xiaozhi.server-*.jar 2>/dev/null | head -1)
     if [ -z "$jar_file" ]; then
