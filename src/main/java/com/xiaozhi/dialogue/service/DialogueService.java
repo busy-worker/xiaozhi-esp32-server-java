@@ -694,37 +694,73 @@ public class DialogueService{
      * 执行TTS任务（带超时和重试）
      */
     private void executeTtsTask(TtsTask task) {
+        String sessionId = task.getSessionId();
+        int seq = task.sentence.getSeq();
+        String text = task.sentence.getText();
+        String ttsProvider = task.ttsConfig != null ? task.ttsConfig.getProvider() : "edge(默认)";
+        long taskStartTime = System.currentTimeMillis();
+        
+        logger.info("TTS任务开始执行 - SessionId: {}, 序号: {}, 重试次数: {}/{}, 提供商: {}, 语音: {}, 文本长度: {}, 文本: \"{}\"", 
+                sessionId, seq, task.retryCount, MAX_RETRY_COUNT, ttsProvider, task.voiceName, 
+                text != null ? text.length() : 0, text != null && text.length() > 50 ? text.substring(0, 50) + "..." : text);
+        
         CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+            long ttsStartTime = System.currentTimeMillis();
             try {
-                long ttsStartTime = System.currentTimeMillis();
+                logger.debug("TTS任务异步执行开始 - SessionId: {}, 序号: {}, 超时设置: {}ms", 
+                        sessionId, seq, TTS_TIMEOUT_MS);
+                
                 String audioPath = ttsFactory.getTtsService(task.ttsConfig, task.voiceName, task.ttsPitch, task.ttsSpeed)
                         .textToSpeech(task.emoSentence.getTtsSentence());
+                
                 long ttsDuration = System.currentTimeMillis() - ttsStartTime;
+                logger.info("TTS任务异步执行完成 - SessionId: {}, 序号: {}, 耗时: {}ms, 音频路径: {}", 
+                        sessionId, seq, ttsDuration, audioPath);
 
                 // 记录TTS生成时间
                 task.sentence.setTtsGenerationTime(ttsDuration / 1000.0);
                 return audioPath;
             } catch (Exception e) {
+                long ttsDuration = System.currentTimeMillis() - ttsStartTime;
+                logger.error("TTS任务异步执行异常 - SessionId: {}, 序号: {}, 耗时: {}ms, 错误: {}", 
+                        sessionId, seq, ttsDuration, e.getMessage(), e);
                 throw new CompletionException(e);
             }
         }, Thread::startVirtualThread);
 
         try {
             // 耗时操作需及时更新最后活动时间，避免误判为会话终止
-            sessionManager.updateLastActivity(task.getSessionId());
+            sessionManager.updateLastActivity(sessionId);
 
+            logger.debug("TTS任务等待结果 - SessionId: {}, 序号: {}, 超时时间: {}ms", 
+                    sessionId, seq, TTS_TIMEOUT_MS);
+            
             // 设置超时
             String audioPath = future.get(TTS_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            
+            long totalTime = System.currentTimeMillis() - taskStartTime;
+            logger.info("TTS任务执行成功 - SessionId: {}, 序号: {}, 总耗时: {}ms, 音频路径: {}", 
+                    sessionId, seq, totalTime, audioPath);
 
             // 成功生成音频
             handleTtsSuccess(task, audioPath);
         } catch (TimeoutException e) {
-            // logger.warn("TTS生成超时 - 序号: {}, 重试次数: {}/{}, 内容: \"{}\"",
-            //         task.sentence.getSeq(), task.retryCount, MAX_RETRY_COUNT, task.sentence.getText());
+            long totalTime = System.currentTimeMillis() - taskStartTime;
+            logger.warn("TTS任务超时 - SessionId: {}, 序号: {}, 重试次数: {}/{}, 总耗时: {}ms (超时阈值: {}ms), 内容: \"{}\"",
+                    sessionId, seq, task.retryCount, MAX_RETRY_COUNT, totalTime, TTS_TIMEOUT_MS, 
+                    text != null && text.length() > 50 ? text.substring(0, 50) + "..." : text);
+            
+            // 尝试取消任务
+            future.cancel(true);
+            logger.debug("TTS任务已取消 - SessionId: {}, 序号: {}", sessionId, seq);
+            
             handleTtsFailure(task, "超时");
         } catch (Exception e) {
-            // logger.error("TTS生成失败 - 序号: {}, 重试次数: {}/{}, 错误: {}",
-            //         task.sentence.getSeq(), task.retryCount, MAX_RETRY_COUNT, e.getMessage());
+            long totalTime = System.currentTimeMillis() - taskStartTime;
+            logger.error("TTS任务执行失败 - SessionId: {}, 序号: {}, 重试次数: {}/{}, 总耗时: {}ms, 错误: {}, 内容: \"{}\"",
+                    sessionId, seq, task.retryCount, MAX_RETRY_COUNT, totalTime, e.getMessage(), 
+                    text != null && text.length() > 50 ? text.substring(0, 50) + "..." : text, e);
+            
             handleTtsFailure(task, e.getMessage());
         }
     }

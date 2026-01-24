@@ -7,11 +7,13 @@ import com.github.pagehelper.PageInfo;
 import com.xiaozhi.common.web.ResultMessage;
 import com.xiaozhi.common.web.PageFilter;
 import com.xiaozhi.dialogue.stt.factory.SttServiceFactory;
+import com.xiaozhi.dialogue.tts.TtsService;
 import com.xiaozhi.dialogue.tts.factory.TtsServiceFactory;
 import com.xiaozhi.entity.SysConfig;
 import com.xiaozhi.service.SysConfigService;
 import com.xiaozhi.utils.CmsUtils;
 
+import cn.dev33.satoken.annotation.SaIgnore;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.Resource;
@@ -25,6 +27,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -172,6 +175,116 @@ public class ConfigController extends BaseController {
         } catch (Exception e) {
             // 捕获其他异常并记录日志
             return ResultMessage.error();
+        }
+    }
+
+    /**
+     * TTS调试接口 - 用于测试TTS服务
+     * 
+     * @param requestBody 包含text(必填), ttsId(可选), voiceName(可选), pitch(可选), speed(可选)
+     * @return TTS生成结果
+     */
+    @SaIgnore
+    @PostMapping("/debug/tts")
+    @ResponseBody
+    @Operation(summary = "TTS调试接口", description = "用于测试TTS服务，输出详细日志")
+    public ResultMessage debugTts(@RequestBody Map<String, Object> requestBody) {
+        long startTime = System.currentTimeMillis();
+        String text = (String) requestBody.get("text");
+        Integer ttsId = requestBody.get("ttsId") != null ? 
+                (requestBody.get("ttsId") instanceof Integer ? (Integer) requestBody.get("ttsId") : 
+                 Integer.parseInt(requestBody.get("ttsId").toString())) : null;
+        String voiceName = (String) requestBody.get("voiceName");
+        Float pitch = requestBody.get("pitch") != null ? 
+                (requestBody.get("pitch") instanceof Float ? (Float) requestBody.get("pitch") : 
+                 Float.parseFloat(requestBody.get("pitch").toString())) : 1.0f;
+        Float speed = requestBody.get("speed") != null ? 
+                (requestBody.get("speed") instanceof Float ? (Float) requestBody.get("speed") : 
+                 Float.parseFloat(requestBody.get("speed").toString())) : 1.0f;
+
+        logger.info("========== TTS调试接口调用开始 ==========");
+        logger.info("请求参数 - 文本: \"{}\", TTS配置ID: {}, 语音: {}, 音调: {}, 语速: {}", 
+                text, ttsId, voiceName, pitch, speed);
+
+        try {
+            // 参数验证
+            if (text == null || text.trim().isEmpty()) {
+                logger.error("TTS调试失败 - 文本参数为空");
+                return ResultMessage.error("文本参数不能为空");
+            }
+
+            // 获取TTS服务
+            SysConfig ttsConfig = null;
+            TtsService ttsService;
+            
+            if (ttsId != null && ttsId > 0) {
+                logger.debug("使用指定的TTS配置 - TTS配置ID: {}", ttsId);
+                ttsConfig = configService.selectConfigById(ttsId);
+                if (ttsConfig == null) {
+                    logger.error("TTS调试失败 - TTS配置不存在，ID: {}", ttsId);
+                    return ResultMessage.error("TTS配置不存在，ID: " + ttsId);
+                }
+                logger.info("TTS配置信息 - 提供商: {}, 配置名称: {}", 
+                        ttsConfig.getProvider(), ttsConfig.getConfigName());
+                
+                // 如果没有指定语音，使用配置的默认语音
+                if (voiceName == null || voiceName.isEmpty()) {
+                    voiceName = "zh-CN-XiaoyiNeural"; // Edge TTS默认语音
+                    logger.debug("使用默认语音: {}", voiceName);
+                }
+                
+                ttsService = ttsServiceFactory.getTtsService(ttsConfig, voiceName, pitch, speed);
+            } else {
+                logger.info("使用默认TTS服务 (Edge TTS)");
+                if (voiceName == null || voiceName.isEmpty()) {
+                    voiceName = "zh-CN-XiaoyiNeural"; // Edge TTS默认语音
+                }
+                ttsService = ttsServiceFactory.getDefaultTtsService();
+            }
+
+            logger.info("TTS服务准备完成 - 提供商: {}, 语音: {}", 
+                    ttsService.getProviderName(), voiceName);
+
+            // 调用TTS服务
+            long ttsStartTime = System.currentTimeMillis();
+            logger.info("开始调用TTS服务生成音频...");
+            
+            String audioPath = ttsService.textToSpeech(text);
+            
+            long ttsDuration = System.currentTimeMillis() - ttsStartTime;
+            long totalTime = System.currentTimeMillis() - startTime;
+
+            logger.info("TTS服务调用完成 - 耗时: {}ms, 音频路径: {}", ttsDuration, audioPath);
+            logger.info("========== TTS调试接口调用成功 ========== 总耗时: {}ms", totalTime);
+
+            // 返回结果
+            ResultMessage result = ResultMessage.success();
+            Map<String, Object> data = new HashMap<>();
+            data.put("audioPath", audioPath);
+            data.put("ttsDuration", ttsDuration);
+            data.put("totalTime", totalTime);
+            data.put("provider", ttsService.getProviderName());
+            data.put("voiceName", voiceName);
+            data.put("text", text);
+            data.put("textLength", text.length());
+            result.put("data", data);
+            
+            return result;
+
+        } catch (Exception e) {
+            long totalTime = System.currentTimeMillis() - startTime;
+            logger.error("========== TTS调试接口调用失败 ========== 总耗时: {}ms", totalTime, e);
+            logger.error("错误详情 - 文本: \"{}\", 错误信息: {}", text, e.getMessage());
+            
+            ResultMessage result = ResultMessage.error("TTS生成失败: " + e.getMessage());
+            Map<String, Object> errorData = new HashMap<>();
+            errorData.put("error", e.getMessage());
+            errorData.put("errorType", e.getClass().getSimpleName());
+            errorData.put("totalTime", totalTime);
+            errorData.put("text", text);
+            result.put("data", errorData);
+            
+            return result;
         }
     }
 }
