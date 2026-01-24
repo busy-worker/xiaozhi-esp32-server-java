@@ -77,12 +77,23 @@ public class TtsServiceFactory {
         String outputPath = OUTPUT_PATH;
         ensureOutputPath(outputPath);
 
-        return switch (config.getProvider()) {
-            case "aliyun" -> new AliyunTtsService(config, voiceName, pitch, speed, outputPath);
+        String provider = config.getProvider();
+        
+        // 支持多种阿里云相关的provider值
+        if ("aliyun".equals(provider) || "aliyun-nls".equals(provider) || 
+            "Tongyi-Qianwen".equals(provider) || (provider != null && provider.toLowerCase().contains("aliyun"))) {
+            logger.debug("使用阿里云TTS服务 - Provider: {}", provider);
+            return new AliyunTtsService(config, voiceName, pitch, speed, outputPath);
+        }
+
+        return switch (provider) {
             case "volcengine" -> new VolcengineTtsService(config, voiceName, pitch, speed, outputPath);
             case "xfyun" -> new XfyunTtsService(config, voiceName, pitch, speed, outputPath);
             case "minimax" -> new MiniMaxTtsService(config, voiceName, pitch, speed, outputPath);
-            default -> new EdgeTtsService(voiceName, pitch, speed, outputPath);
+            default -> {
+                logger.warn("未知的TTS提供商: {}，使用默认Edge TTS", provider);
+                yield new EdgeTtsService(voiceName, pitch, speed, outputPath);
+            }
         };
     }
 
