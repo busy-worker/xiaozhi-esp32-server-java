@@ -227,10 +227,30 @@ public class ConfigController extends BaseController {
                 logger.info("TTS配置信息 - 提供商: {}, 配置名称: {}", 
                         ttsConfig.getProvider(), ttsConfig.getConfigName());
                 
-                // 如果没有指定语音，使用配置的默认语音
-                if (voiceName == null || voiceName.isEmpty()) {
-                    voiceName = "zh-CN-XiaoyiNeural"; // Edge TTS默认语音
-                    logger.debug("使用默认语音: {}", voiceName);
+                // 根据TTS提供商选择合适的默认语音
+                String provider = ttsConfig.getProvider();
+                boolean isAliyunTts = "aliyun".equals(provider) || "aliyun-nls".equals(provider) || 
+                                      "Tongyi-Qianwen".equals(provider) || 
+                                      (provider != null && provider.toLowerCase().contains("aliyun"));
+                
+                logger.debug("TTS提供商判断 - Provider: {}, 是否为阿里云: {}", provider, isAliyunTts);
+                
+                if (isAliyunTts) {
+                    // 阿里云TTS：如果语音名称是Edge TTS的，或者为空，使用阿里云支持的默认语音
+                    if (voiceName == null || voiceName.isEmpty() || 
+                        voiceName.contains("zh-CN-") || voiceName.contains("Xiaoyi") || 
+                        voiceName.contains("Neural")) {
+                        voiceName = "Cherry"; // 阿里云Qwen-TTS默认语音
+                        logger.info("使用阿里云TTS默认语音: {} (原语音名称不兼容)", voiceName);
+                    } else {
+                        logger.info("使用指定的阿里云TTS语音: {}", voiceName);
+                    }
+                } else {
+                    // Edge TTS或其他服务
+                    if (voiceName == null || voiceName.isEmpty()) {
+                        voiceName = "zh-CN-XiaoyiNeural"; // Edge TTS默认语音
+                        logger.debug("使用Edge TTS默认语音: {}", voiceName);
+                    }
                 }
                 
                 ttsService = ttsServiceFactory.getTtsService(ttsConfig, voiceName, pitch, speed);
